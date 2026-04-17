@@ -984,29 +984,14 @@ impl Config {
     }
 
     fn get_auto_id() -> Option<String> {
-        #[cfg(any(target_os = "android", target_os = "ios"))]
-        {
-            return Some(
-                rand::thread_rng()
-                    .gen_range(1_000_000_000..2_000_000_000)
-                    .to_string(),
-            );
-        }
-
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            let mut id = 0u32;
-            if let Ok(Some(ma)) = mac_address::get_mac_address() {
-                for x in &ma.bytes()[2..] {
-                    id = (id << 8) | (*x as u32);
-                }
-                id &= 0x1FFFFFFF;
-                log::info!("Generated id {}", id);
-                Some(id.to_string())
-            } else {
-                None
-            }
-        }
+        // GtwinsRemote: ephemeral 6-digit session code (000000..=999999).
+        // No MAC-derived persistent ID — every launch gets a fresh code so
+        // that support agents can just read "123-456" to the end user on
+        // the phone. Zero-padded so the digit count is always exactly six.
+        let n: u32 = rand::thread_rng().gen_range(0..1_000_000);
+        let code = format!("{:06}", n);
+        log::info!("Generated session code {}", code);
+        Some(code)
     }
 
     pub fn get_auto_password(length: usize) -> String {
@@ -1214,12 +1199,12 @@ impl Config {
     }
 
     pub fn update_id() {
-        // to-do: how about if one ip register a lot of ids?
+        // GtwinsRemote: rotate to a fresh 6-digit session code.
         let id = Self::get_id();
-        let mut rng = rand::thread_rng();
-        let new_id = rng.gen_range(1_000_000_000..2_000_000_000).to_string();
+        let n: u32 = rand::thread_rng().gen_range(0..1_000_000);
+        let new_id = format!("{:06}", n);
         Config::set_id(&new_id);
-        log::info!("id updated from {} to {}", id, new_id);
+        log::info!("session code rotated: {} -> {}", id, new_id);
     }
 
     pub fn set_permanent_password(password: &str) {
