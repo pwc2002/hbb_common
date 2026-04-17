@@ -31,22 +31,33 @@ fn get_auto_password() -> String {
 
 // Should only be called in server
 pub fn update_temporary_password() {
-    *TEMPORARY_PASSWORD.write().unwrap() = get_auto_password();
+    // GtwinsRemote: in our flow the temporary password is always the current
+    // 6-digit session code (Config::get_id). Rotate the session code itself
+    // instead of the independent TEMPORARY_PASSWORD static, and keep the
+    // static in sync for any code path that still reads it directly.
+    Config::update_id();
+    *TEMPORARY_PASSWORD.write().unwrap() = Config::get_id();
 }
 
 // Should only be called in server
 pub fn temporary_password() -> String {
-    TEMPORARY_PASSWORD.read().unwrap().clone()
+    // GtwinsRemote: the "temporary password" is the session code itself.
+    // This makes `code == password`, so the end user only has to read out
+    // six digits and the support agent types them once.
+    Config::get_id()
 }
 
 fn verification_method() -> VerificationMethod {
     let method = Config::get_option("verification-method");
-    if method == "use-temporary-password" {
-        VerificationMethod::OnlyUseTemporaryPassword
-    } else if method == "use-permanent-password" {
+    if method == "use-permanent-password" {
         VerificationMethod::OnlyUsePermanentPassword
+    } else if method == "use-both-passwords" {
+        VerificationMethod::UseBothPasswords
     } else {
-        VerificationMethod::UseBothPasswords // default
+        // GtwinsRemote: default to temporary-password-only so the 6-digit
+        // session code is the single authentication factor. Permanent
+        // passwords and unattended access are disabled by default.
+        VerificationMethod::OnlyUseTemporaryPassword
     }
 }
 
@@ -76,12 +87,16 @@ pub fn has_valid_password() -> bool {
 
 pub fn approve_mode() -> ApproveMode {
     let mode = Config::get_option("approve-mode");
-    if mode == "password" {
-        ApproveMode::Password
-    } else if mode == "click" {
+    if mode == "click" {
         ApproveMode::Click
-    } else {
+    } else if mode == "both" {
         ApproveMode::Both
+    } else {
+        // GtwinsRemote: default to password-only approval so the connection
+        // proceeds immediately once the agent types the correct 6-digit
+        // session code. The end user typed the code on purpose — a second
+        // manual click would be redundant friction for support calls.
+        ApproveMode::Password
     }
 }
 
