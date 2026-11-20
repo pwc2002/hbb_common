@@ -156,7 +156,7 @@ const CHARS: &[char] = &[
     'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
 
-pub const RENDEZVOUS_SERVERS: &[&str] = &["rs.gtwins.co.kr"];
+pub const RENDEZVOUS_SERVERS: &[&str] = &["rs2.gtwins.co.kr"];
 pub const RS_PUB_KEY: &str = "VQ5y33xu1vRlxROHMZcZMWPZA0jFI9eL7oPB5MEvohQ=";
 
 pub const RENDEZVOUS_PORT: i32 = 21116;
