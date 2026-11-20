@@ -157,7 +157,7 @@ const CHARS: &[char] = &[
 ];
 
 pub const RENDEZVOUS_SERVERS: &[&str] = &["rs.gtwins.co.kr"];
-pub const RS_PUB_KEY: &str = "HMHhG9BvzHBvpDUjE21fYjPSQYf5ePY4R4xCxGwCy6Y=";
+pub const RS_PUB_KEY: &str = "VQ5y33xu1vRlxROHMZcZMWPZA0jFI9eL7oPB5MEvohQ=";
 
 pub const RENDEZVOUS_PORT: i32 = 21116;
 pub const RELAY_PORT: i32 = 21117;
@@ -990,7 +990,8 @@ impl Config {
         // the phone. Zero-padded so the digit count is always exactly six.
         let n: u32 = rand::thread_rng().gen_range(0..1_000_000);
         let code = format!("{:06}", n);
-        log::info!("Generated session code {}", code);
+        // The code doubles as the one-time password: never write it to the log.
+        log::info!("Generated session code");
         Some(code)
     }
 
@@ -1047,7 +1048,7 @@ impl Config {
         }
         let mut config = Config::load_::<Config>("");
         if config.key_pair.0.is_empty() {
-            log::info!("Generated new keypair for id: {}", config.id);
+            log::info!("Generated new keypair");
             let (pk, sk) = sign::gen_keypair();
             let key_pair = (sk.0.to_vec(), pk.0.into());
             config.key_pair = key_pair.clone();
@@ -1200,11 +1201,11 @@ impl Config {
 
     pub fn update_id() {
         // GtwinsRemote: rotate to a fresh 6-digit session code.
-        let id = Self::get_id();
         let n: u32 = rand::thread_rng().gen_range(0..1_000_000);
         let new_id = format!("{:06}", n);
         Config::set_id(&new_id);
-        log::info!("session code rotated: {} -> {}", id, new_id);
+        // The code doubles as the one-time password: never write it to the log.
+        log::info!("session code rotated");
     }
 
     pub fn set_permanent_password(password: &str) {
