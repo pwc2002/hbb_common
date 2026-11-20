@@ -157,6 +157,9 @@ const CHARS: &[char] = &[
 ];
 
 pub const RENDEZVOUS_SERVERS: &[&str] = &["rs2.gtwins.co.kr"];
+/// See Config::set_only_current_rendezvous_servers. Off = upstream behaviour.
+static ONLY_CURRENT_RENDEZVOUS_SERVERS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 pub const RS_PUB_KEY: &str = "VQ5y33xu1vRlxROHMZcZMWPZA0jFI9eL7oPB5MEvohQ=";
 
 pub const RENDEZVOUS_PORT: i32 = 21116;
@@ -856,12 +859,13 @@ impl Config {
             rendezvous_server = PROD_RENDEZVOUS_SERVER.read().unwrap().clone();
         }
         if rendezvous_server.is_empty() {
-            // Gtwins: the saved server (written by update_latency) is used only
-            // while it is still one of the current servers. A PC that ran an
-            // older build keeps the old name here, which must never be used
-            // again (the old name is cut off on release day).
+            // The saved server (written by update_latency) is returned as is,
+            // unless set_only_current_rendezvous_servers(true) was called: then
+            // only while it is still one of get_rendezvous_servers().
             let saved = CONFIG2.read().unwrap().rendezvous_server.clone();
-            if Self::is_current_rendezvous_server(&saved) {
+            if !ONLY_CURRENT_RENDEZVOUS_SERVERS.load(std::sync::atomic::Ordering::SeqCst)
+                || Self::is_current_rendezvous_server(&saved)
+            {
                 rendezvous_server = saved;
             }
         }
@@ -877,7 +881,15 @@ impl Config {
         rendezvous_server
     }
 
-    /// Gtwins: whether `server` (host or host:port) names one of the current
+    /// Use a saved rendezvous server only while it is one of the current
+    /// servers (get_rendezvous_servers). Off by default (saved value as is);
+    /// an application turns it on once at start-up, before anything reads a
+    /// server name, when a saved name from an older build must not be used.
+    pub fn set_only_current_rendezvous_servers(on: bool) {
+        ONLY_CURRENT_RENDEZVOUS_SERVERS.store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Whether `server` (host or host:port) names one of the current
     /// rendezvous servers (get_rendezvous_servers).
     pub fn is_current_rendezvous_server(server: &str) -> bool {
         fn host(x: &str) -> String {
@@ -899,10 +911,14 @@ impl Config {
                 .any(|x| host(x) == h)
     }
 
-    /// Gtwins: at start-up, replace a saved rendezvous server that is not a
-    /// current one (e.g. the old name kept by an older build) with the first
-    /// current server. Returns the dropped value.
+    /// With set_only_current_rendezvous_servers(true): replace a saved
+    /// rendezvous server that is not a current one with the first current
+    /// server and store it. Returns the replaced value. Does nothing when the
+    /// switch is off.
     pub fn drop_stale_rendezvous_server() -> Option<String> {
+        if !ONLY_CURRENT_RENDEZVOUS_SERVERS.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
         let saved = CONFIG2.read().unwrap().rendezvous_server.clone();
         if saved.is_empty() || Self::is_current_rendezvous_server(&saved) {
             return None;
@@ -3205,6 +3221,64 @@ impl Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The two saved-rendezvous-server tests share global state.
+    static SAVED_SERVER_TEST: Mutex<()> = Mutex::new(());
+
+    fn saved_server_setup(saved: &str) {
+        // Nothing but the saved value and the built-in list may decide.
+        let mut o = OVERWRITE_SETTINGS.write().unwrap();
+        o.insert("custom-rendezvous-server".to_owned(), "".to_owned());
+        o.insert("rendezvous-servers".to_owned(), "".to_owned());
+        drop(o);
+        *EXE_RENDEZVOUS_SERVER.write().unwrap() = "".to_owned();
+        *PROD_RENDEZVOUS_SERVER.write().unwrap() = "".to_owned();
+        CONFIG2.write().unwrap().rendezvous_server = saved.to_owned();
+    }
+
+    fn first_current_server() -> String {
+        let first = Config::get_rendezvous_servers()[0].clone();
+        if first.contains(':') {
+            first
+        } else {
+            format!("{first}:{RENDEZVOUS_PORT}")
+        }
+    }
+
+    #[test]
+    fn saved_rendezvous_server_switch_off_is_upstream_behaviour() {
+        let _g = SAVED_SERVER_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        Config::set_only_current_rendezvous_servers(false);
+        saved_server_setup("other.example.com:21116");
+        // Off (default): the saved server is returned as it is.
+        assert_eq!(Config::get_rendezvous_server(), "other.example.com:21116");
+        // And it is not rewritten.
+        assert_eq!(Config::drop_stale_rendezvous_server(), None);
+        assert_eq!(
+            CONFIG2.read().unwrap().rendezvous_server,
+            "other.example.com:21116"
+        );
+    }
+
+    #[test]
+    fn saved_rendezvous_server_switch_on_uses_current_names_only() {
+        let _g = SAVED_SERVER_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        Config::set_only_current_rendezvous_servers(true);
+        // A saved name that is not current is not used: the first current one is.
+        saved_server_setup("other.example.com:21116");
+        assert_eq!(Config::get_rendezvous_server(), first_current_server());
+        // A saved current name is still used as it is.
+        let current = first_current_server();
+        saved_server_setup(&current);
+        assert_eq!(Config::get_rendezvous_server(), current);
+        // Same host with another port is current too.
+        let host = current.rsplit_once(':').unwrap().0.to_owned();
+        saved_server_setup(&format!("{host}:21116"));
+        assert!(Config::is_current_rendezvous_server(&format!("{host}:21116")));
+        assert!(!Config::is_current_rendezvous_server("other.example.com"));
+        assert!(!Config::is_current_rendezvous_server(""));
+        Config::set_only_current_rendezvous_servers(false);
+    }
 
     #[test]
     fn test_serialize() {
