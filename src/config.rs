@@ -856,7 +856,14 @@ impl Config {
             rendezvous_server = PROD_RENDEZVOUS_SERVER.read().unwrap().clone();
         }
         if rendezvous_server.is_empty() {
-            rendezvous_server = CONFIG2.read().unwrap().rendezvous_server.clone();
+            // Gtwins: the saved server (written by update_latency) is used only
+            // while it is still one of the current servers. A PC that ran an
+            // older build keeps the old name here, which must never be used
+            // again (the old name is cut off on release day).
+            let saved = CONFIG2.read().unwrap().rendezvous_server.clone();
+            if Self::is_current_rendezvous_server(&saved) {
+                rendezvous_server = saved;
+            }
         }
         if rendezvous_server.is_empty() {
             rendezvous_server = Self::get_rendezvous_servers()
@@ -868,6 +875,54 @@ impl Config {
             rendezvous_server = format!("{rendezvous_server}:{RENDEZVOUS_PORT}");
         }
         rendezvous_server
+    }
+
+    /// Gtwins: whether `server` (host or host:port) names one of the current
+    /// rendezvous servers (get_rendezvous_servers).
+    pub fn is_current_rendezvous_server(server: &str) -> bool {
+        fn host(x: &str) -> String {
+            x.trim()
+                .rsplit_once(':')
+                .map_or(x.trim(), |(h, p)| {
+                    if p.chars().all(|c| c.is_ascii_digit()) {
+                        h
+                    } else {
+                        x.trim()
+                    }
+                })
+                .to_ascii_lowercase()
+        }
+        let h = host(server);
+        !h.is_empty()
+            && Self::get_rendezvous_servers()
+                .iter()
+                .any(|x| host(x) == h)
+    }
+
+    /// Gtwins: at start-up, replace a saved rendezvous server that is not a
+    /// current one (e.g. the old name kept by an older build) with the first
+    /// current server. Returns the dropped value.
+    pub fn drop_stale_rendezvous_server() -> Option<String> {
+        let saved = CONFIG2.read().unwrap().rendezvous_server.clone();
+        if saved.is_empty() || Self::is_current_rendezvous_server(&saved) {
+            return None;
+        }
+        let first = Self::get_rendezvous_servers()
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        let first = if first.is_empty() || first.contains(':') {
+            first
+        } else {
+            format!("{first}:{RENDEZVOUS_PORT}")
+        };
+        let mut config = CONFIG2.write().unwrap();
+        if config.rendezvous_server != saved {
+            return None;
+        }
+        config.rendezvous_server = first;
+        config.store();
+        Some(saved)
     }
 
     pub fn get_rendezvous_servers() -> Vec<String> {
